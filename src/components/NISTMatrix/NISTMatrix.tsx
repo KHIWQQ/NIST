@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { NIST_FUNCTIONS } from './data';
+import { NIST_FUNCTIONS, TOTAL_SUBCATEGORIES } from './data';
 import { exportDocumentation } from './exportUtils';
+import ChallengeModal from './ChallengeModal';
 import MappingMatrix, {
   buildInitialMappings,
   cellKey,
@@ -9,25 +10,69 @@ import MappingMatrix, {
   exportMappingCsv,
   importMappingJson,
 } from './MappingMatrix';
+import type { Challenge } from './types';
+import { challengeService } from '../../services/nistChallengeService';
 
 type PageView = 'matrix' | 'mapping';
 
+// ── Challenge store: subId → Challenge[] ──────────────────────
+type ChallengeStore = Record<string, Challenge[]>;
+
+// ── helper: count challenges linked to a subId ────────────────
+const countChallenges = (store: ChallengeStore, subId: string) =>
+  (store[subId] ?? []).length;
+
+// ── helper: does this subId have any challenges? ──────────────
+const hasChallenge = (store: ChallengeStore, subId: string) =>
+  countChallenges(store, subId) > 0;
+
+// ── helper: collect ALL challenges that share nistTags with subId ──
+const getChallengesForSub = (store: ChallengeStore, subId: string): Challenge[] =>
+  store[subId] ?? [];
+
 const NISTMatrix: React.FC = () => {
-  // ── Shared mapping state (source of truth) ──
+  // ── Mapping state (tool coverage) ────────────────────────────
   const [mappings, setMappings] = useState<Set<string>>(buildInitialMappings);
   const [clock, setClock] = useState(new Date());
   const [page, setPage] = useState<PageView>('matrix');
   const [focusSubId, setFocusSubId] = useState<string | null>(null);
 
-  // Derive covered subcategories from mappings
+  // ── Challenge state ───────────────────────────────────────────
+  const [challengeStore, setChallengeStore] = useState<ChallengeStore>({});
+  const [modalSubId, setModalSubId] = useState<string | null>(null);
+
+  // ── Derived ───────────────────────────────────────────────────
   const covered = useMemo(() => getCoveredSubs(mappings), [mappings]);
 
+  // total subcategories that have at least 1 challenge
+  const challengeCoveredCount = useMemo(
+    () => Object.values(challengeStore).filter((arr) => arr.length > 0).length,
+    [challengeStore]
+  );
+
+  // ── Load challenges on mount ──────────────────────────────────
+  useEffect(() => {
+    challengeService.fetchAll().then((list) => {
+      const store: ChallengeStore = {};
+      for (const ch of list) {
+        for (const tag of ch.nistTags) {
+          if (!store[tag]) store[tag] = [];
+          store[tag].push(ch as Challenge);
+        }
+      }
+      setChallengeStore(store);
+    }).catch(() => {
+      // API not ready yet — start with empty store
+    });
+  }, []);
+
+  // ── Clock ─────────────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // ── Mapping toggle (used by MappingMatrix) ──
+  // ── Mapping toggle ────────────────────────────────────────────
   const handleToggleMapping = useCallback((subId: string, toolId: string) => {
     const key = cellKey(subId, toolId);
     setMappings((prev) => {
@@ -38,7 +83,34 @@ const NISTMatrix: React.FC = () => {
     });
   }, []);
 
-  // ── Shared actions (same on both pages) ──
+  // ── Challenge modal open / close ──────────────────────────────
+  const openChallengeModal = useCallback((subId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setModalSubId(subId);
+  }, []);
+
+  const closeChallengeModal = useCallback(() => setModalSubId(null), []);
+
+  // ── Save new challenge (via API service) ──────────────────────
+  const handleSaveChallenge = useCallback(
+    async (payload: Omit<Challenge, 'id'>) => {
+      try {
+        const created = await challengeService.create(payload) as Challenge;
+        setChallengeStore((prev) => {
+          const next = { ...prev };
+          for (const tag of created.nistTags) {
+            next[tag] = [...(next[tag] ?? []), created];
+          }
+          return next;
+        });
+      } catch (err) {
+        console.error('Failed to save challenge:', err);
+      }
+    },
+    []
+  );
+
+  // ── Export / Import ───────────────────────────────────────────
   const handleImport = useCallback(async () => {
     const result = await importMappingJson();
     if (result.size > 0) setMappings(result);
@@ -48,6 +120,7 @@ const NISTMatrix: React.FC = () => {
   const handleExportDoc = useCallback(() => exportDocumentation(covered), [covered]);
   const handleClearAll = useCallback(() => setMappings(new Set()), []);
 
+  // ── Clock format ──────────────────────────────────────────────
   const formatDate = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getHours() >= 12 ? 'PM' : 'AM'} GMT+7`;
@@ -58,17 +131,13 @@ const NISTMatrix: React.FC = () => {
 
       {/* ── Top Bar ── */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', marginBottom: 2, flexShrink: 0 }}>
-        {/* Hamburger */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer', marginRight: 16 }}>
           <div style={{ width: 18, height: 2, background: '#4a5568' }} />
           <div style={{ width: 18, height: 2, background: '#4a5568' }} />
           <div style={{ width: 18, height: 2, background: '#4a5568' }} />
         </div>
-        {/* Shield icon + title */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 30, height: 34, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
+          <div style={{ width: 30, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="30" height="34" viewBox="0 0 30 34" fill="none">
               <path d="M15 2L3 8v10c0 8 5.5 14 12 16 6.5-2 12-8 12-16V8L15 2z" fill="#b8860b" stroke="#d4a017" strokeWidth="1"/>
               <path d="M15 7l-2 5h-5l4 3-1.5 5L15 17l4.5 3-1.5-5 4-3h-5L15 7z" fill="#d4a017"/>
@@ -80,12 +149,10 @@ const NISTMatrix: React.FC = () => {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        {/* Lang toggle */}
         <div style={{ display: 'flex', gap: 0, marginRight: 20 }}>
           <button style={{ ...langBtnStyle, background: '#1a2332', color: '#4fc3f7', borderColor: '#1a3a4a' }}>US</button>
           <button style={{ ...langBtnStyle, color: '#4a5568', borderColor: '#1a2a3a' }}>TH</button>
         </div>
-        {/* Clock */}
         <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12, color: '#4fc3f7', letterSpacing: '0.05em' }}>
           {formatDate(clock)}
         </div>
@@ -109,24 +176,12 @@ const NISTMatrix: React.FC = () => {
             </div>
           </div>
           <div style={{ flex: 1 }} />
-          {/* Page Tabs */}
+          {/* Tabs */}
           <div style={{ display: 'flex', gap: 0, marginRight: 16 }}>
-            <button
-              onClick={() => setPage('matrix')}
-              style={{
-                ...tabBtnStyle,
-                ...(page === 'matrix' ? { background: '#0c1e3a', color: '#4fc3f7', borderColor: '#1a4a5a' } : {}),
-              }}
-            >
+            <button onClick={() => setPage('matrix')} style={{ ...tabBtnStyle, ...(page === 'matrix' ? tabActiveStyle : {}) }}>
               Matrix View
             </button>
-            <button
-              onClick={() => setPage('mapping')}
-              style={{
-                ...tabBtnStyle,
-                ...(page === 'mapping' ? { background: '#0c1e3a', color: '#4fc3f7', borderColor: '#1a4a5a' } : {}),
-              }}
-            >
+            <button onClick={() => setPage('mapping')} style={{ ...tabBtnStyle, ...(page === 'mapping' ? tabActiveStyle : {}) }}>
               Mapping Matrix
             </button>
           </div>
@@ -141,22 +196,44 @@ const NISTMatrix: React.FC = () => {
 
         {page === 'matrix' ? (
           <>
-            {/* ── Coverage Bar ── */}
-            {covered.size > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 24px', borderBottom: '1px solid #0e2a3a', background: '#0a1020' }}>
-                <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4fc3f7' }}>
-                  <strong style={{ color: '#81d4fa' }}>{covered.size}</strong> covered
-                </span>
-                <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 10, color: '#2a3a4a', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {[...covered].join('  ·  ')}
-                </span>
-                <span style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#2a4a3a' }}>
-                  auto-synced from mapping
+            {/* ── Coverage + Legend Bar ── */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '8px 24px', borderBottom: '1px solid #0e2a3a', background: '#0a1020', flexShrink: 0 }}>
+              {/* Coverage counter (MITRE-style) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <circle cx="7" cy="7" r="6" stroke="#4fc3f7" strokeWidth="1.2"/>
+                  <path d="M4 7l2 2 4-4" stroke="#4fc3f7" strokeWidth="1.2" strokeLinecap="round"/>
+                </svg>
+                <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 13, color: '#8899aa', letterSpacing: '0.05em' }}>
+                  Coverage{' '}
+                  <strong style={{ color: challengeCoveredCount > 0 ? '#fbbf24' : '#4a5568', fontSize: 15 }}>
+                    {challengeCoveredCount}
+                  </strong>
+                  <span style={{ color: '#2a3a4a' }}> / {TOTAL_SUBCATEGORIES}</span>
                 </span>
               </div>
-            )}
 
-            {/* ── Matrix ── */}
+              {/* Divider */}
+              <div style={{ width: 1, height: 16, background: '#1a2a3a' }} />
+
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                <LegendItem color="#2a3a4a" label="NO CHALLENGE" />
+                <LegendItem color="#d4a017" label="HAS CHALLENGE" />
+                <LegendItem color="#4fc3f7" label="LINKED (MAPPED)" />
+              </div>
+
+              <div style={{ flex: 1 }} />
+
+              {/* Tool coverage */}
+              {covered.size > 0 && (
+                <span style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#2a4a3a' }}>
+                  <strong style={{ color: '#34d399' }}>{covered.size}</strong> tool-mapped
+                </span>
+              )}
+            </div>
+
+            {/* ── Matrix Grid ── */}
             <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(160px, 1fr))', gap: 12, minWidth: 980, alignItems: 'start' }}>
                 {NIST_FUNCTIONS.map((fn) => (
@@ -169,7 +246,15 @@ const NISTMatrix: React.FC = () => {
                       background: `linear-gradient(180deg, ${fn.color}08 0%, transparent 100%)`,
                       textAlign: 'center',
                     }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: fn.color }}>{fn.name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: fn.color }}>
+                        {fn.name}
+                      </div>
+                      {/* mini coverage */}
+                      <div style={{ fontSize: 9, color: '#2a3a4a', fontFamily: "'Share Tech Mono', monospace", marginTop: 2 }}>
+                        {fn.cats.flatMap(c => c.subs).filter(s => hasChallenge(challengeStore, s.id)).length}
+                        {' / '}
+                        {fn.cats.reduce((a, c) => a + c.subs.length, 0)} covered
+                      </div>
                     </div>
 
                     {/* Categories & Subcategories */}
@@ -177,55 +262,26 @@ const NISTMatrix: React.FC = () => {
                       {fn.cats.map((cat, ci) => (
                         <React.Fragment key={cat.id}>
                           {ci > 0 && <div style={{ height: 1, background: '#0e1a2a', margin: '4px 0' }} />}
-                          <div style={{
-                            fontSize: 8, fontFamily: "'Share Tech Mono', monospace", letterSpacing: '0.12em',
-                            color: `${fn.color}66`, padding: '4px 4px 2px', textTransform: 'uppercase',
-                          }}>
+                          <div style={{ fontSize: 8, fontFamily: "'Share Tech Mono', monospace", letterSpacing: '0.12em', color: `${fn.color}66`, padding: '4px 4px 2px', textTransform: 'uppercase' }}>
                             {cat.id} · {cat.name}
                           </div>
                           {cat.subs.map((sub) => {
-                            const isCovered = covered.has(sub.id);
+                            const isMapped = covered.has(sub.id);
+                            const hasChall = hasChallenge(challengeStore, sub.id);
+                            const challCount = countChallenges(challengeStore, sub.id);
+
                             return (
-                              <div
+                              <SubcategoryCell
                                 key={sub.id}
-                                onClick={() => { setFocusSubId(sub.id); setPage('mapping'); }}
-                                style={{
-                                  padding: '8px 10px',
-                                  background: isCovered ? '#0c1e3a' : '#0c1220',
-                                  border: `1px solid ${isCovered ? fn.color + '55' : '#111e2e'}`,
-                                  borderRadius: 3,
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  transition: 'all 0.15s ease',
-                                }}
-                                onMouseEnter={(e) => {
-                                  if (!isCovered) {
-                                    e.currentTarget.style.background = '#0e1830';
-                                    e.currentTarget.style.borderColor = '#1a2e44';
-                                  }
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (!isCovered) {
-                                    e.currentTarget.style.background = '#0c1220';
-                                    e.currentTarget.style.borderColor = '#111e2e';
-                                  }
-                                }}
-                              >
-                                <div style={{ flex: 1 }}>
-                                  <div style={{
-                                    fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-                                    color: isCovered ? '#81d4fa' : '#8899aa', lineHeight: 1.35,
-                                  }}>
-                                    {sub.name}
-                                  </div>
-                                </div>
-                                {isCovered && (
-                                  <div style={{ fontSize: 8, color: fn.color, flexShrink: 0, fontFamily: "'Share Tech Mono', monospace" }}>MAPPED</div>
-                                )}
-                                <div style={{ fontSize: 12, color: '#2a3a4a', flexShrink: 0 }}>›</div>
-                              </div>
+                                subId={sub.id}
+                                subName={sub.name}
+                                isMapped={isMapped}
+                                hasChallenge={hasChall}
+                                challengeCount={challCount}
+                                fnColor={fn.color}
+                                onNavigate={() => { setFocusSubId(sub.id); setPage('mapping'); }}
+                                onOpenChallenge={(e) => openChallengeModal(sub.id, e)}
+                              />
                             );
                           })}
                         </React.Fragment>
@@ -237,7 +293,12 @@ const NISTMatrix: React.FC = () => {
             </div>
           </>
         ) : (
-          <MappingMatrix mappings={mappings} onToggle={handleToggleMapping} focusSubId={focusSubId} onFocusHandled={() => setFocusSubId(null)} />
+          <MappingMatrix
+            mappings={mappings}
+            onToggle={handleToggleMapping}
+            focusSubId={focusSubId}
+            onFocusHandled={() => setFocusSubId(null)}
+          />
         )}
 
         {/* ── Footer ── */}
@@ -246,16 +307,167 @@ const NISTMatrix: React.FC = () => {
             ‹ NIST CSF 2.0 Challenge Matrix ›
           </div>
           <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#1a2a3a' }}>
-            {page === 'matrix' ? 'Coverage auto-synced from Mapping Matrix' : 'Click a cell to toggle mapping'}
+            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : 'Click a cell to toggle mapping'}
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: '#1a2a3a' }}>
             Design Version 2.0.0-beta
           </div>
         </div>
       </div>
+
+      {/* ── Challenge Modal ── */}
+      {modalSubId !== null && (
+        <ChallengeModal
+          selectedSubs={[modalSubId]}
+          existingChallenges={getChallengesForSub(challengeStore, modalSubId)}
+          onSave={handleSaveChallenge}
+          onClose={closeChallengeModal}
+        />
+      )}
     </div>
   );
 };
+
+// ── SubcategoryCell ────────────────────────────────────────────
+
+interface SubcategoryCellProps {
+  subId: string;
+  subName: string;
+  isMapped: boolean;
+  hasChallenge: boolean;
+  challengeCount: number;
+  fnColor: string;
+  onNavigate: () => void;
+  onOpenChallenge: (e: React.MouseEvent) => void;
+}
+
+const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
+  subName, isMapped, hasChallenge, challengeCount, fnColor, onNavigate, onOpenChallenge,
+}) => {
+  const [hovered, setHovered] = useState(false);
+
+  // Border & background based on state
+  let bg = '#0c1220';
+  let border = '#111e2e';
+  let textColor = '#8899aa';
+
+  if (isMapped && hasChallenge) {
+    bg = '#0c1e3a';
+    border = fnColor + '66';
+    textColor = '#81d4fa';
+  } else if (isMapped) {
+    bg = '#0b1a30';
+    border = '#1a3a5a';
+    textColor = '#6a90aa';
+  } else if (hasChallenge) {
+    bg = '#1a1400';
+    border = '#d4a01744';
+    textColor = '#c8a840';
+  }
+
+  if (hovered) {
+    bg = isMapped ? '#0e1e40' : hasChallenge ? '#221a00' : '#0e1830';
+    border = isMapped ? fnColor + '80' : hasChallenge ? '#d4a01788' : '#1a2e44';
+  }
+
+  return (
+    <div
+      style={{
+        padding: '7px 8px',
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: 3,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        transition: 'all 0.15s ease',
+        position: 'relative',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={onNavigate}
+    >
+      {/* Left accent bar when mapped */}
+      {isMapped && (
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: 3, background: fnColor, borderRadius: '3px 0 0 3px',
+        }} />
+      )}
+
+      {/* Label */}
+      <div style={{ flex: 1, paddingLeft: isMapped ? 4 : 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: textColor, lineHeight: 1.35 }}>
+          {subName}
+        </div>
+      </div>
+
+      {/* Right-side icons */}
+      <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+        {/* LINKED badge */}
+        {isMapped && (
+          <span
+            title="Tool mapped — click to view"
+            style={{
+              fontSize: 10, color: '#4fc3f7', lineHeight: 1,
+              padding: '1px 2px', borderRadius: 2,
+              background: 'rgba(79,195,247,0.08)',
+            }}
+          >
+            🔗
+          </span>
+        )}
+
+        {/* CHALLENGE badge — click opens modal */}
+        <span
+          title={hasChallenge ? `${challengeCount} challenge${challengeCount > 1 ? 's' : ''} — click to manage` : 'No challenge — click to add'}
+          onClick={onOpenChallenge}
+          style={{
+            fontSize: 9,
+            fontFamily: "'Share Tech Mono', monospace",
+            letterSpacing: '0.05em',
+            padding: '2px 5px',
+            borderRadius: 2,
+            border: `1px solid ${hasChallenge ? '#d4a01766' : '#1a2a3a'}`,
+            background: hasChallenge ? '#2a1a0088' : 'transparent',
+            color: hasChallenge ? '#d4a017' : '#2a3a4a',
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            minWidth: 22,
+            textAlign: 'center',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#d4a017aa';
+            e.currentTarget.style.color = '#f0c030';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = hasChallenge ? '#d4a01766' : '#1a2a3a';
+            e.currentTarget.style.color = hasChallenge ? '#d4a017' : '#2a3a4a';
+          }}
+        >
+          {hasChallenge ? `🎯${challengeCount}` : '🎯'}
+        </span>
+
+        {/* Navigate arrow */}
+        <span style={{ fontSize: 12, color: '#2a3a4a' }}>›</span>
+      </div>
+    </div>
+  );
+};
+
+// ── LegendItem ────────────────────────────────────────────────
+
+const LegendItem: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+    <div style={{
+      width: 10, height: 10, borderRadius: 2,
+      background: color === '#2a3a4a' ? 'transparent' : color + '33',
+      border: `1px solid ${color}`,
+    }} />
+    <span style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#3a4a5a' }}>{label}</span>
+  </div>
+);
 
 // ── Styles ────────────────────────────────────────────────────
 
@@ -269,6 +481,10 @@ const tabBtnStyle: React.CSSProperties = {
   padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
   letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 2,
   background: 'transparent', border: '1px solid #1a2a3a', color: '#4a5568',
+};
+
+const tabActiveStyle: React.CSSProperties = {
+  background: '#0c1e3a', color: '#4fc3f7', borderColor: '#1a4a5a',
 };
 
 const hudBtnStyle: React.CSSProperties = {
