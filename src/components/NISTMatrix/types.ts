@@ -20,27 +20,26 @@ export interface NistFunction {
 }
 
 // ── Challenge Types ───────────────────────────────────────────
+// Shape mirrors rtaf-api GET /api/challenges/fetch-all whitelist:
+// id, documentId, name, description, score, ctype, sub_type, answer_type
 
-export type ChallengeDifficulty = 'easy' | 'medium' | 'hard';
+export type ChallengeCType = 'JEO' | 'KOTH' | 'ATDF' | 'PRAC';
 
-export type ChallengeType =
-  | 'Log Analysis'
-  | 'Forensics'
-  | 'Config Review'
-  | 'PCAP Analysis'
-  | 'Threat Hunting'
-  | 'Incident Response'
-  | 'Hardening';
+export type ChallengeSubType =
+  | 'VL' | 'SOC' | 'LOG' | 'TH' | 'OT' | 'RWS' | 'PR' | 'NONE'
+  | 'Web' | 'Crypto' | 'PWN' | 'Mobile' | 'Reverse_Engineering'
+  | 'Forensic' | 'Programming' | 'Network' | 'OS_Exploit';
 
 export interface Challenge {
   id: number;
+  documentId?: string;
   name: string;
   description: string;
-  type: ChallengeType;
-  difficulty: ChallengeDifficulty;
   score: number;
-  flag: string;
-  nistTags: string[]; // e.g. ["DE.CM-01", "DE.AE-03"]
+  ctype?: ChallengeCType | null;
+  sub_type?: ChallengeSubType | null;
+  answer_type?: 'File' | 'Flag' | null;
+  nistTags: string[]; // sub_ids — populated after nist-data merge; empty when none
 }
 
 // ── Store Types ───────────────────────────────────────────────

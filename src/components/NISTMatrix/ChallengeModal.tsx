@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import type { Challenge, ChallengeDifficulty, ChallengeType } from './types';
-import { CHALLENGE_TYPES, getFunctionBySubId, getSubcategoryName } from './data';
+import type { Challenge, ChallengeCType, ChallengeSubType } from './types';
+import { getFunctionBySubId, getSubcategoryName } from './data';
 
 interface Props {
   selectedSubs: string[];
@@ -9,25 +9,25 @@ interface Props {
   onClose: () => void;
 }
 
-const DIFFICULTY_STYLE: Record<ChallengeDifficulty, React.CSSProperties> = {
-  easy:   { color: '#34d399', borderColor: '#34d39944', background: '#064e3b44' },
-  medium: { color: '#fbbf24', borderColor: '#fbbf2444', background: '#78350f44' },
-  hard:   { color: '#f87171', borderColor: '#f8717144', background: '#7f1d1d44' },
-};
+const CTYPE_OPTIONS: ChallengeCType[] = ['JEO', 'KOTH', 'ATDF', 'PRAC'];
+const SUBTYPE_OPTIONS: ChallengeSubType[] = [
+  'Web', 'Crypto', 'PWN', 'Mobile', 'Reverse_Engineering', 'Forensic',
+  'Programming', 'Network', 'OS_Exploit', 'VL', 'SOC', 'LOG', 'TH',
+  'OT', 'RWS', 'PR', 'NONE',
+];
 
 const ChallengeModal: React.FC<Props> = ({ selectedSubs, existingChallenges, onSave, onClose }) => {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [type, setType] = useState<ChallengeType>('Log Analysis');
-  const [difficulty, setDifficulty] = useState<ChallengeDifficulty>('medium');
+  const [ctype, setCType] = useState<ChallengeCType>('JEO');
+  const [subType, setSubType] = useState<ChallengeSubType>('Forensic');
   const [score, setScore] = useState(100);
-  const [flag, setFlag] = useState('');
 
   const handleSave = () => {
-    onSave({ name: name || 'Untitled', description, type, difficulty, score, flag, nistTags: selectedSubs });
+    onSave({ name: name || 'Untitled', description, ctype, sub_type: subType, score, nistTags: selectedSubs });
     setShowForm(false);
-    setName(''); setDescription(''); setScore(100); setFlag('');
+    setName(''); setDescription(''); setScore(100);
   };
 
   const title = selectedSubs.length === 1
@@ -75,11 +75,9 @@ const ChallengeModal: React.FC<Props> = ({ selectedSubs, existingChallenges, onS
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#e5e7eb' }}>{ch.name}</span>
                     <div style={{ display: 'flex', gap: 4 }}>
-                      {(['difficulty', 'type', 'score'] as const).map((k) => {
-                        const val = k === 'score' ? `${ch.score}PTS` : k === 'difficulty' ? ch.difficulty.toUpperCase() : ch.type.toUpperCase();
-                        const style = k === 'difficulty' ? DIFFICULTY_STYLE[ch.difficulty] : { color: '#6b7280', borderColor: '#374151' };
-                        return <span key={k} style={{ fontSize: 9, padding: '1px 7px', borderRadius: 3, border: '1px solid', fontFamily: 'monospace', ...style }}>{val}</span>;
-                      })}
+                      {ch.ctype && <span style={{ fontSize: 9, padding: '1px 7px', borderRadius: 3, border: '1px solid #374151', color: '#9ca3af', fontFamily: 'monospace' }}>{ch.ctype}</span>}
+                      {ch.sub_type && <span style={{ fontSize: 9, padding: '1px 7px', borderRadius: 3, border: '1px solid #374151', color: '#9ca3af', fontFamily: 'monospace' }}>{ch.sub_type}</span>}
+                      <span style={{ fontSize: 9, padding: '1px 7px', borderRadius: 3, border: '1px solid #374151', color: '#9ca3af', fontFamily: 'monospace' }}>{ch.score}PTS</span>
                     </div>
                   </div>
                   {ch.description && <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>{ch.description}</div>}
@@ -115,29 +113,21 @@ const ChallengeModal: React.FC<Props> = ({ selectedSubs, existingChallenges, onS
               ))}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 11 }}>
                 <div>
-                  <label style={labelStyle}>Type</label>
-                  <select value={type} onChange={(e) => setType(e.target.value as ChallengeType)} style={{ ...inputStyle, background: '#0d1117' }}>
-                    {CHALLENGE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <label style={labelStyle}>CType</label>
+                  <select value={ctype} onChange={(e) => setCType(e.target.value as ChallengeCType)} style={{ ...inputStyle, background: '#0d1117' }}>
+                    {CTYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Difficulty</label>
-                  <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as ChallengeDifficulty)} style={{ ...inputStyle, background: '#0d1117' }}>
-                    <option value="easy">Easy</option>
-                    <option value="medium">Medium</option>
-                    <option value="hard">Hard</option>
+                  <label style={labelStyle}>Sub Type</label>
+                  <select value={subType} onChange={(e) => setSubType(e.target.value as ChallengeSubType)} style={{ ...inputStyle, background: '#0d1117' }}>
+                    {SUBTYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={labelStyle}>Score</label>
-                  <input type="number" value={score} onChange={(e) => setScore(Number(e.target.value))} min={10} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Flag</label>
-                  <input value={flag} onChange={(e) => setFlag(e.target.value)} placeholder="CTF{...}" style={inputStyle} />
-                </div>
+              <div>
+                <label style={labelStyle}>Score</label>
+                <input type="number" value={score} onChange={(e) => setScore(Number(e.target.value))} min={10} style={inputStyle} />
               </div>
             </div>
           )}

@@ -2,18 +2,22 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { NIST_FUNCTIONS, TOTAL_SUBCATEGORIES } from './data';
 import { exportDocumentation } from './exportUtils';
 import ChallengeModal from './ChallengeModal';
-import MappingMatrix, {
+import ChallengeLibrary from './ChallengeLibrary';
+import TagEditorModal from './TagEditorModal';
+import MappingMatrix from './MappingMatrix';
+import {
   buildInitialMappings,
   cellKey,
   getCoveredSubs,
   exportMappingJson,
   exportMappingCsv,
   importMappingJson,
-} from './MappingMatrix';
+} from './mappingUtils';
 import type { Challenge } from './types';
 import { challengeService } from '../../services/nistChallengeService';
+import type { AuthUser } from '../../services/auth';
 
-type PageView = 'matrix' | 'mapping';
+type PageView = 'matrix' | 'mapping' | 'challenges';
 
 // ── Challenge store: subId → Challenge[] ──────────────────────
 type ChallengeStore = Record<string, Challenge[]>;
@@ -30,7 +34,12 @@ const hasChallenge = (store: ChallengeStore, subId: string) =>
 const getChallengesForSub = (store: ChallengeStore, subId: string): Challenge[] =>
   store[subId] ?? [];
 
-const NISTMatrix: React.FC = () => {
+interface NISTMatrixProps {
+  currentUser?: AuthUser;
+  onLogout?: () => void;
+}
+
+const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
   // ── Mapping state (tool coverage) ────────────────────────────
   const [mappings, setMappings] = useState<Set<string>>(buildInitialMappings);
   const [clock, setClock] = useState(new Date());
@@ -38,8 +47,19 @@ const NISTMatrix: React.FC = () => {
   const [focusSubId, setFocusSubId] = useState<string | null>(null);
 
   // ── Challenge state ───────────────────────────────────────────
+  // challenges: fetched from rtaf-api on mount — tags are mutable via TagEditor
+  const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [challengeStore, setChallengeStore] = useState<ChallengeStore>({});
   const [modalSubId, setModalSubId] = useState<string | null>(null);
+  // sub_id → NIST documentId, needed to translate tags for link/unlink
+  const [subIdToDocId, setSubIdToDocId] = useState<Record<string, string>>({});
+
+  // ── Challenge Library: selected bank challenge IDs ────────────
+  const [selectedBankIds, setSelectedBankIds] = useState<Set<number>>(new Set());
+
+  // ── Tag Editor state ──────────────────────────────────────────
+  const [editingChallengeId, setEditingChallengeId] = useState<number | null>(null);
 
   // ── Derived ───────────────────────────────────────────────────
   const covered = useMemo(() => getCoveredSubs(mappings), [mappings]);
@@ -50,20 +70,18 @@ const NISTMatrix: React.FC = () => {
     [challengeStore]
   );
 
-  // ── Load challenges on mount ──────────────────────────────────
+  // ── Load challenges + NIST tags on mount ──────────────────────
   useEffect(() => {
-    challengeService.fetchAll().then((list) => {
-      const store: ChallengeStore = {};
-      for (const ch of list) {
-        for (const tag of ch.nistTags) {
-          if (!store[tag]) store[tag] = [];
-          store[tag].push(ch as Challenge);
-        }
-      }
-      setChallengeStore(store);
-    }).catch(() => {
-      // API not ready yet — start with empty store
-    });
+    challengeService.loadAll()
+      .then(({ challenges: list, subIdToDocId: map }) => {
+        setChallenges(list);
+        setSubIdToDocId(map);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch challenges from rtaf-api:', err);
+        setLoadError(err?.message ?? 'Failed to load challenges');
+      });
   }, []);
 
   // ── Clock ─────────────────────────────────────────────────────
@@ -91,21 +109,110 @@ const NISTMatrix: React.FC = () => {
 
   const closeChallengeModal = useCallback(() => setModalSubId(null), []);
 
-  // ── Save new challenge (via API service) ──────────────────────
-  const handleSaveChallenge = useCallback(
-    async (payload: Omit<Challenge, 'id'>) => {
-      try {
-        const created = await challengeService.create(payload) as Challenge;
-        setChallengeStore((prev) => {
-          const next = { ...prev };
-          for (const tag of created.nistTags) {
-            next[tag] = [...(next[tag] ?? []), created];
+  // ── Toggle a challenge from the bank ─────────────────────────
+  const handleBankToggle = useCallback((ch: Challenge) => {
+    setSelectedBankIds(prev => {
+      const next = new Set(prev);
+      if (next.has(ch.id)) {
+        next.delete(ch.id);
+        setChallengeStore(store => {
+          const updated = { ...store };
+          for (const tag of ch.nistTags) {
+            if (updated[tag]) updated[tag] = updated[tag].filter(c => c.id !== ch.id);
+          }
+          return updated;
+        });
+      } else {
+        next.add(ch.id);
+        setChallengeStore(store => {
+          const updated = { ...store };
+          for (const tag of ch.nistTags) {
+            if (!updated[tag]) updated[tag] = [];
+            if (!updated[tag].some(c => c.id === ch.id)) updated[tag] = [...updated[tag], ch];
+          }
+          return updated;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Update tags on an existing challenge ──────────────────────
+  const handleUpdateChallengeTags = useCallback(
+    async (challengeId: number, newTags: string[]) => {
+      const target = challenges.find((c) => c.id === challengeId);
+      if (!target) return;
+      const oldTags = target.nistTags;
+      const updatedChallenge: Challenge = { ...target, nistTags: newTags };
+
+      // Optimistic local update
+      setChallenges((prev) =>
+        prev.map((c) => (c.id === challengeId ? updatedChallenge : c))
+      );
+
+      // Keep the matrix store in sync when this challenge is selected
+      if (selectedBankIds.has(challengeId)) {
+        setChallengeStore((store) => {
+          const next = { ...store };
+          for (const tag of oldTags) {
+            if (newTags.includes(tag)) continue;
+            if (next[tag]) next[tag] = next[tag].filter((c) => c.id !== challengeId);
+          }
+          for (const tag of newTags) {
+            const arr = next[tag] ? next[tag].filter((c) => c.id !== challengeId) : [];
+            next[tag] = [...arr, updatedChallenge];
           }
           return next;
         });
-      } catch (err) {
-        console.error('Failed to save challenge:', err);
       }
+
+      // Persist to rtaf-api. link/unlink address NIST records by documentId,
+      // so translate sub_ids → nistDocumentIds first.
+      if (!target.documentId) {
+        console.warn('Challenge has no documentId — tags not persisted');
+        return;
+      }
+      const toDocIds = (tags: string[]) =>
+        tags.map((t) => subIdToDocId[t]).filter((d): d is string => Boolean(d));
+      try {
+        const newDocIds = toDocIds(newTags);
+        if (newDocIds.length > 0) {
+          // link replaces the whole set → handles both add and remove
+          await challengeService.linkTags(target.documentId, newDocIds);
+        } else {
+          // clearing all tags: link rejects empty arrays, so unlink the old set
+          const oldDocIds = toDocIds(oldTags);
+          if (oldDocIds.length > 0) {
+            await challengeService.unlinkTags(target.documentId, oldDocIds);
+          }
+        }
+        setLoadError(null);
+      } catch (err) {
+        console.error('Failed to persist NIST tags:', err);
+        setLoadError(err instanceof Error ? err.message : 'Failed to save tags');
+      }
+    },
+    [challenges, selectedBankIds, subIdToDocId]
+  );
+
+  // ── Tag Editor open / close ───────────────────────────────────
+  const openTagEditor = useCallback((challengeId: number) => {
+    setEditingChallengeId(challengeId);
+  }, []);
+
+  const closeTagEditor = useCallback(() => setEditingChallengeId(null), []);
+
+  const editingChallenge = useMemo(
+    () => challenges.find((c) => c.id === editingChallengeId) ?? null,
+    [challenges, editingChallengeId]
+  );
+
+  // ── Save new challenge ────────────────────────────────────────
+  // Creating challenges goes through rtaf-api admin (challenge-manage),
+  // not this UI. Keep stub so ChallengeModal still compiles.
+  const handleSaveChallenge = useCallback(
+    async () => {
+      console.warn('Creating challenges from this UI is not supported. Use rtaf-api admin.');
     },
     []
   );
@@ -149,6 +256,27 @@ const NISTMatrix: React.FC = () => {
           </div>
         </div>
         <div style={{ flex: 1 }} />
+        {currentUser && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 16 }}>
+            <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#6a8090', letterSpacing: '0.05em' }}>
+              {currentUser.username}
+            </span>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                title="Logout"
+                style={{
+                  padding: '3px 9px', fontSize: 9, fontFamily: "'Rajdhani', sans-serif",
+                  fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+                  cursor: 'pointer', borderRadius: 2,
+                  background: 'transparent', border: '1px solid #1a3a4a', color: '#4a7a8a',
+                }}
+              >
+                Logout
+              </button>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 0, marginRight: 20 }}>
           <button style={{ ...langBtnStyle, background: '#1a2332', color: '#4fc3f7', borderColor: '#1a3a4a' }}>US</button>
           <button style={{ ...langBtnStyle, color: '#4a5568', borderColor: '#1a2a3a' }}>TH</button>
@@ -167,12 +295,25 @@ const NISTMatrix: React.FC = () => {
         <div style={{ ...cornerStyle, bottom: -1, left: -1, transform: 'scaleY(-1)' }} />
         <div style={{ ...cornerStyle, bottom: -1, right: -1, transform: 'scale(-1)' }} />
 
+        {/* ── API Error Banner ── */}
+        {loadError && (
+          <div style={{
+            padding: '8px 24px', background: '#3a0a0a', borderBottom: '1px solid #f8717144',
+            color: '#fca5a5', fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+            letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+          }}>
+            <span style={{ color: '#f87171', fontWeight: 700 }}>⚠ API:</span>
+            <span>{loadError}</span>
+            <span style={{ color: '#7a3a3a' }}>· session may have expired — try logging out and back in</span>
+          </div>
+        )}
+
         {/* ── Sub Bar ── */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '14px 24px', borderBottom: '1px solid #0e2a3a', flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 9, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#4a5568' }}>Blue Team Assessment Tool</div>
             <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#e2e8f0' }}>
-              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : 'NIST CSF MAPPING MATRIX'}
+              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : page === 'mapping' ? 'NIST CSF MAPPING MATRIX' : 'CHALLENGE LIBRARY'}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -183,6 +324,16 @@ const NISTMatrix: React.FC = () => {
             </button>
             <button onClick={() => setPage('mapping')} style={{ ...tabBtnStyle, ...(page === 'mapping' ? tabActiveStyle : {}) }}>
               Mapping Matrix
+            </button>
+            <button onClick={() => setPage('challenges')} style={{ ...tabBtnStyle, ...(page === 'challenges' ? tabChallengeActiveStyle : {}), position: 'relative' }}>
+              Challenge Library
+              {selectedBankIds.size > 0 && (
+                <span style={{
+                  position: 'absolute', top: 3, right: 3,
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: '#fbbf24', boxShadow: '0 0 4px #fbbf24',
+                }} />
+              )}
             </button>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -292,12 +443,19 @@ const NISTMatrix: React.FC = () => {
               </div>
             </div>
           </>
-        ) : (
+        ) : page === 'mapping' ? (
           <MappingMatrix
             mappings={mappings}
             onToggle={handleToggleMapping}
             focusSubId={focusSubId}
             onFocusHandled={() => setFocusSubId(null)}
+          />
+        ) : (
+          <ChallengeLibrary
+            challenges={challenges}
+            selectedIds={selectedBankIds}
+            onToggle={handleBankToggle}
+            onEditTags={openTagEditor}
           />
         )}
 
@@ -307,7 +465,7 @@ const NISTMatrix: React.FC = () => {
             ‹ NIST CSF 2.0 Challenge Matrix ›
           </div>
           <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#1a2a3a' }}>
-            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : 'Click a cell to toggle mapping'}
+            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : page === 'mapping' ? 'Click a cell to toggle mapping' : 'Click a challenge to select  ·  Selected challenges plot on matrix'}
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: '#1a2a3a' }}>
             Design Version 2.0.0-beta
@@ -322,6 +480,18 @@ const NISTMatrix: React.FC = () => {
           existingChallenges={getChallengesForSub(challengeStore, modalSubId)}
           onSave={handleSaveChallenge}
           onClose={closeChallengeModal}
+        />
+      )}
+
+      {/* ── Tag Editor Modal ── */}
+      {editingChallenge !== null && (
+        <TagEditorModal
+          challenge={editingChallenge}
+          onSave={(tags) => {
+            handleUpdateChallengeTags(editingChallenge.id, tags);
+            closeTagEditor();
+          }}
+          onClose={closeTagEditor}
         />
       )}
     </div>
@@ -485,6 +655,10 @@ const tabBtnStyle: React.CSSProperties = {
 
 const tabActiveStyle: React.CSSProperties = {
   background: '#0c1e3a', color: '#4fc3f7', borderColor: '#1a4a5a',
+};
+
+const tabChallengeActiveStyle: React.CSSProperties = {
+  background: '#1a1400', color: '#fbbf24', borderColor: '#3a2a00',
 };
 
 const hudBtnStyle: React.CSSProperties = {

@@ -1,0 +1,46 @@
+{
+  "kind": "collectionType",
+  "collectionName": "nist_datas",
+  "info": {
+    "singularName": "nist-data",
+    "pluralName": "nist-datas",
+    "displayName": "Nist_data"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "sub_id": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "sub_name": {
+      "type": "string",
+      "required": true
+    },
+    "category_id": {
+      "type": "string",
+      "required": true
+    },
+    "category_name": {
+      "type": "string",
+      "required": true
+    },
+    "function_id": {
+      "type": "string",
+      "required": true
+    },
+    "function_name": {
+      "type": "string",
+      "required": true
+    },
+    "challenges": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::challenge.challenge",
+      "inversedBy": "nist_datas"
+    }
+  }
+}

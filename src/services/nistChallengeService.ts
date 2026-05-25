@@ -1,108 +1,145 @@
 import type { Challenge } from '../components/NISTMatrix/types';
+import { authService } from './auth';
 
-// ── Config ────────────────────────────────────────────────────────
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-const USE_REAL_API = false; // Set to true when backend is ready
+// Same-origin via Vite proxy (/api → rtaf-api). See vite.config.ts.
+const BASE = '';
 
-// ── Local Mock Adapter ────────────────────────────────────────────
-class LocalChallengeAdapter {
-  private storage: Challenge[] = [];
-  private nextId = 1;
-
-  async fetchAll(): Promise<Challenge[]> {
-    return [...this.storage];
-  }
-
-  async fetchByTag(tag: string): Promise<Challenge[]> {
-    return this.storage.filter(ch => ch.nistTags.includes(tag));
-  }
-
-  async create(payload: Omit<Challenge, 'id'>): Promise<Challenge> {
-    const challenge: Challenge = {
-      ...payload,
-      id: String(this.nextId++),
-    };
-    this.storage.push(challenge);
-    return challenge;
-  }
-
-  async update(id: string, payload: Partial<Challenge>): Promise<Challenge> {
-    const idx = this.storage.findIndex(ch => ch.id === id);
-    if (idx === -1) throw new Error(`Challenge ${id} not found`);
-    this.storage[idx] = { ...this.storage[idx], ...payload };
-    return this.storage[idx];
-  }
-
-  async delete(id: string): Promise<void> {
-    const idx = this.storage.findIndex(ch => ch.id === id);
-    if (idx === -1) throw new Error(`Challenge ${id} not found`);
-    this.storage.splice(idx, 1);
-  }
+function authHeaders(): Record<string, string> {
+  const token = authService.getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// ── API Adapter ───────────────────────────────────────────────────
-class RemoteChallengeAdapter {
-  async fetchAll(): Promise<Challenge[]> {
-    const res = await fetch(`${BASE_URL}/nist/challenges`);
-    if (!res.ok) throw new Error(`Failed to fetch challenges: ${res.status}`);
-    return res.json();
+async function ensureOk(res: Response, label: string): Promise<void> {
+  if (res.ok) return;
+  if (res.status === 401) {
+    // Token expired or invalid → clear so user sees login screen on next mount
+    authService.logout();
   }
-
-  async fetchByTag(tag: string): Promise<Challenge[]> {
-    const res = await fetch(`${BASE_URL}/nist/challenges?nistTag=${encodeURIComponent(tag)}`);
-    if (!res.ok) throw new Error(`Failed to fetch challenges by tag: ${res.status}`);
-    return res.json();
-  }
-
-  async create(payload: Omit<Challenge, 'id'>): Promise<Challenge> {
-    const res = await fetch(`${BASE_URL}/nist/challenges`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(`Failed to create challenge: ${res.status}`);
-    return res.json();
-  }
-
-  async update(id: string, payload: Partial<Challenge>): Promise<Challenge> {
-    const res = await fetch(`${BASE_URL}/nist/challenges/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(`Failed to update challenge: ${res.status}`);
-    return res.json();
-  }
-
-  async delete(id: string): Promise<void> {
-    const res = await fetch(`${BASE_URL}/nist/challenges/${id}`, {
-      method: 'DELETE',
-    });
-    if (!res.ok) throw new Error(`Failed to delete challenge: ${res.status}`);
-  }
+  const body = await res.text().catch(() => '');
+  throw new Error(`${label} failed: ${res.status} ${res.statusText}${body ? ' — ' + body.slice(0, 200) : ''}`);
 }
 
-// ── Service Export ────────────────────────────────────────────────
-const adapter = USE_REAL_API ? new RemoteChallengeAdapter() : new LocalChallengeAdapter();
+// ── rtaf-api response shape (whitelisted by challenge-fetch.fetchAll) ──
+interface RtafChallenge {
+  id: number;
+  documentId?: string;
+  name: string;
+  description?: string | null;
+  score?: number | null;
+  ctype?: string | null;
+  sub_type?: string | null;
+  answer_type?: string | null;
+}
+
+function mapChallenge(raw: RtafChallenge): Challenge {
+  return {
+    id: raw.id,
+    documentId: raw.documentId,
+    name: raw.name ?? '(unnamed)',
+    description: raw.description ?? '',
+    score: raw.score ?? 0,
+    ctype: (raw.ctype as Challenge['ctype']) ?? null,
+    sub_type: (raw.sub_type as Challenge['sub_type']) ?? null,
+    answer_type: (raw.answer_type as Challenge['answer_type']) ?? null,
+    nistTags: [],
+  };
+}
+
+// ── /nist-data/matrix response shape (see api-stage/nist-data) ──
+interface RtafMatrixSub {
+  id: number;
+  documentId: string;
+  sub_id: string;       // human NIST id, e.g. "DE.CM-01" (matches data.ts)
+  sub_name: string;
+  challengeCount: number;
+  challenges?: { documentId: string; name: string }[];
+}
+interface RtafMatrixCat { subcategories?: RtafMatrixSub[] }
+interface RtafMatrixFn { categories?: RtafMatrixCat[] }
+
+export interface NistMatrixMaps {
+  // sub_id (e.g. "DE.CM-01") → NIST record documentId, used to translate
+  // tags into the nistDocumentIds that link/unlink require.
+  subIdToDocId: Record<string, string>;
+  // challenge documentId → sub_id[], used to populate Challenge.nistTags.
+  challengeTags: Record<string, string[]>;
+}
 
 export const challengeService = {
   async fetchAll(): Promise<Challenge[]> {
-    return adapter.fetchAll();
+    const res = await fetch(`${BASE}/api/challenges/fetch-all`, {
+      headers: { ...authHeaders() },
+    });
+    await ensureOk(res, 'fetchAll');
+    const json = (await res.json()) as { data?: RtafChallenge[] };
+    return (json.data ?? []).map(mapChallenge);
   },
 
-  async fetchByTag(tag: string): Promise<Challenge[]> {
-    return adapter.fetchByTag(tag);
+  // ── Build the two lookup maps from /nist-data/matrix ──────────
+  async fetchMatrix(): Promise<NistMatrixMaps> {
+    const res = await fetch(`${BASE}/api/nist-data/matrix`, {
+      headers: { ...authHeaders() },
+    });
+    await ensureOk(res, 'fetchMatrix');
+    const json = (await res.json()) as { data?: RtafMatrixFn[] };
+
+    const subIdToDocId: Record<string, string> = {};
+    const challengeTags: Record<string, string[]> = {};
+    for (const fn of json.data ?? []) {
+      for (const cat of fn.categories ?? []) {
+        for (const sub of cat.subcategories ?? []) {
+          subIdToDocId[sub.sub_id] = sub.documentId;
+          for (const ch of sub.challenges ?? []) {
+            if (!ch.documentId) continue;
+            (challengeTags[ch.documentId] ??= []).push(sub.sub_id);
+          }
+        }
+      }
+    }
+    return { subIdToDocId, challengeTags };
   },
 
-  async create(payload: Omit<Challenge, 'id'>): Promise<Challenge> {
-    return adapter.create(payload);
+  // ── Load challenges + their NIST tags in one shot ─────────────
+  // Matrix is best-effort: if the nist-data module isn't deployed yet,
+  // challenges still load (untagged) rather than the whole page failing.
+  async loadAll(): Promise<{ challenges: Challenge[]; subIdToDocId: Record<string, string> }> {
+    const challenges = await this.fetchAll();
+    let maps: NistMatrixMaps = { subIdToDocId: {}, challengeTags: {} };
+    try {
+      maps = await this.fetchMatrix();
+    } catch (err) {
+      console.warn('NIST matrix unavailable — tags stay empty until backend is merged:', err);
+    }
+    const merged = challenges.map((c) =>
+      c.documentId && maps.challengeTags[c.documentId]
+        ? { ...c, nistTags: maps.challengeTags[c.documentId] }
+        : c
+    );
+    return { challenges: merged, subIdToDocId: maps.subIdToDocId };
   },
 
-  async update(id: string, payload: Partial<Challenge>): Promise<Challenge> {
-    return adapter.update(id, payload);
+  // ── NIST tag link/unlink (requires nist-data module on rtaf-api) ──
+  async linkTags(challengeDocumentId: string, nistDocumentIds: string[]): Promise<void> {
+    const res = await fetch(
+      `${BASE}/api/nist-data/challenge/${encodeURIComponent(challengeDocumentId)}/link`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ nistDocumentIds }),
+      }
+    );
+    await ensureOk(res, 'linkTags');
   },
 
-  async delete(id: string): Promise<void> {
-    return adapter.delete(id);
+  async unlinkTags(challengeDocumentId: string, nistDocumentIds: string[]): Promise<void> {
+    const res = await fetch(
+      `${BASE}/api/nist-data/challenge/${encodeURIComponent(challengeDocumentId)}/unlink`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ nistDocumentIds }),
+      }
+    );
+    await ensureOk(res, 'unlinkTags');
   },
 };
