@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { authService, type AuthUser } from '../services/auth';
+import { ACCENT, APP_BG, glow } from './NISTMatrix/theme';
 
 interface Props {
   onAuthenticated: (user: AuthUser) => void;
@@ -27,12 +28,12 @@ const LoginScreen: React.FC<Props> = ({ onAuthenticated }) => {
 
   return (
     <div style={{
-      minHeight: '100vh', background: '#060a10',
+      minHeight: '100vh', background: APP_BG,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
     }}>
       <div style={{
-        width: 'min(400px, 100%)', background: '#0a1018', border: '1px solid #1a3a4a',
-        borderRadius: 4, overflow: 'hidden',
+        width: 'min(400px, 100%)', background: 'rgba(8,12,20,0.82)', border: `1px solid ${ACCENT}3a`,
+        borderRadius: 14, overflow: 'hidden', boxShadow: glow(ACCENT, 44, '22'), backdropFilter: 'blur(8px)',
       }}>
         {/* Header */}
         <div style={{

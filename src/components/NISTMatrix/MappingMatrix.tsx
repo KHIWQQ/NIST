@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NIST_FUNCTIONS } from './data';
 import { TOOL_GROUPS } from './challengeData';
 import { cellKey } from './mappingUtils';
+import { MATRIX_BG } from './theme';
 
 // ── Component ──
 
@@ -65,7 +66,7 @@ const MappingMatrix: React.FC<MappingMatrixProps> = ({ mappings, onToggle, focus
   const totalToolCols = TOOL_GROUPS.reduce((a, g) => a + g.tools.length, 0);
 
   return (
-    <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0 }}>
+    <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0, background: MATRIX_BG }}>
       <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: totalToolCols * 48 + 300 }}>
 
         {/* ═══ HEADER: 2 rows ═══ */}

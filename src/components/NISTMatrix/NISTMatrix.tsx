@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { NIST_FUNCTIONS, TOTAL_SUBCATEGORIES } from './data';
-import { exportDocumentation } from './exportUtils';
+import { exportChallengeTagDoc } from './exportUtils';
 import ChallengeModal from './ChallengeModal';
+import ExportDocxModal from './ExportDocxModal';
 import ChallengeLibrary from './ChallengeLibrary';
+import ChallengeTagReport from './ChallengeTagReport';
 import TagEditorModal from './TagEditorModal';
 import MappingMatrix from './MappingMatrix';
 import {
@@ -16,8 +18,9 @@ import {
 import type { Challenge } from './types';
 import { challengeService } from '../../services/nistChallengeService';
 import type { AuthUser } from '../../services/auth';
+import { ACCENT, APP_BG, PANEL_BG, glow, textGlow } from './theme';
 
-type PageView = 'matrix' | 'mapping' | 'challenges';
+type PageView = 'matrix' | 'mapping' | 'challenges' | 'report';
 
 // ── Challenge store: subId → Challenge[] ──────────────────────
 type ChallengeStore = Record<string, Challenge[]>;
@@ -54,6 +57,13 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
   const [modalSubId, setModalSubId] = useState<string | null>(null);
   // sub_id → NIST documentId, needed to translate tags for link/unlink
   const [subIdToDocId, setSubIdToDocId] = useState<Record<string, string>>({});
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Tag Report: the challenge currently being tagged ──────────
+  const [reportChallengeId, setReportChallengeId] = useState<number | null>(null);
+
+  // ── Export DOCX modal ─────────────────────────────────────────
+  const [showExportDocx, setShowExportDocx] = useState(false);
 
   // ── Challenge Library: selected bank challenge IDs ────────────
   const [selectedBankIds, setSelectedBankIds] = useState<Set<number>>(new Set());
@@ -70,9 +80,9 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
     [challengeStore]
   );
 
-  // ── Load challenges + NIST tags on mount ──────────────────────
-  useEffect(() => {
-    challengeService.loadAll()
+  // ── Load challenges + NIST tags (mount + manual refresh) ──────
+  const loadData = useCallback(() => {
+    return challengeService.loadAll()
       .then(({ challenges: list, subIdToDocId: map }) => {
         setChallenges(list);
         setSubIdToDocId(map);
@@ -83,6 +93,13 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
         setLoadError(err?.message ?? 'Failed to load challenges');
       });
   }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData().finally(() => setRefreshing(false));
+  }, [loadData]);
 
   // ── Clock ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -195,6 +212,20 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
     [challenges, selectedBankIds, subIdToDocId]
   );
 
+  // ── Tag Report: toggle one subcategory on the selected challenge ──
+  const handleToggleReportTag = useCallback(
+    (subId: string) => {
+      if (reportChallengeId == null) return;
+      const ch = challenges.find((c) => c.id === reportChallengeId);
+      if (!ch) return;
+      const newTags = ch.nistTags.includes(subId)
+        ? ch.nistTags.filter((t) => t !== subId)
+        : [...ch.nistTags, subId];
+      handleUpdateChallengeTags(reportChallengeId, newTags);
+    },
+    [reportChallengeId, challenges, handleUpdateChallengeTags]
+  );
+
   // ── Tag Editor open / close ───────────────────────────────────
   const openTagEditor = useCallback((challengeId: number) => {
     setEditingChallengeId(challengeId);
@@ -224,7 +255,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
   }, []);
   const handleExportJson = useCallback(() => exportMappingJson(mappings), [mappings]);
   const handleExportCsv = useCallback(() => exportMappingCsv(mappings), [mappings]);
-  const handleExportDoc = useCallback(() => exportDocumentation(covered), [covered]);
+  const handleExportDoc = useCallback(() => setShowExportDocx(true), []);
   const handleClearAll = useCallback(() => setMappings(new Set()), []);
 
   // ── Clock format ──────────────────────────────────────────────
@@ -234,7 +265,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
   };
 
   return (
-    <div style={{ height: '100vh', background: '#060a10', padding: '16px 20px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ height: '100vh', background: APP_BG, padding: '16px 20px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
       {/* ── Top Bar ── */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', marginBottom: 2, flexShrink: 0 }}>
@@ -287,7 +318,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
       </div>
 
       {/* ── HUD Container ── */}
-      <div style={{ position: 'relative', border: '1px solid #0e2a3a', borderRadius: 2, background: '#080c14', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ position: 'relative', border: `1px solid ${ACCENT}3a`, borderRadius: 16, background: PANEL_BG, boxShadow: glow(ACCENT, 44, '20'), backdropFilter: 'blur(8px)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
         {/* Corner accents */}
         <div style={{ ...cornerStyle, top: -1, left: -1 }} />
@@ -313,7 +344,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
           <div>
             <div style={{ fontSize: 9, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#4a5568' }}>Blue Team Assessment Tool</div>
             <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#e2e8f0' }}>
-              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : page === 'mapping' ? 'NIST CSF MAPPING MATRIX' : 'CHALLENGE LIBRARY'}
+              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : page === 'mapping' ? 'NIST CSF MAPPING MATRIX' : page === 'report' ? 'NIST CSF TAG REPORT' : 'CHALLENGE LIBRARY'}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -321,6 +352,9 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
           <div style={{ display: 'flex', gap: 0, marginRight: 16 }}>
             <button onClick={() => setPage('matrix')} style={{ ...tabBtnStyle, ...(page === 'matrix' ? tabActiveStyle : {}) }}>
               Matrix View
+            </button>
+            <button onClick={() => setPage('report')} style={{ ...tabBtnStyle, ...(page === 'report' ? tabActiveStyle : {}) }}>
+              Tag Report
             </button>
             <button onClick={() => setPage('mapping')} style={{ ...tabBtnStyle, ...(page === 'mapping' ? tabActiveStyle : {}) }}>
               Mapping Matrix
@@ -388,16 +422,16 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(160px, 1fr))', gap: 12, minWidth: 980, alignItems: 'start' }}>
                 {NIST_FUNCTIONS.map((fn) => (
-                  <div key={fn.id} style={{ background: '#0a1018', border: '1px solid #0e2a3a', borderRadius: 3, overflow: 'hidden' }}>
+                  <div key={fn.id} style={{ background: 'rgba(3,7,18,0.8)', border: `1px solid ${fn.color}55`, borderRadius: 14, overflow: 'hidden', boxShadow: glow(fn.color, 22, '22'), backdropFilter: 'blur(6px)' }}>
 
                     {/* Function Header */}
                     <div style={{
                       padding: '12px 14px',
                       borderTop: `2px solid ${fn.color}`,
-                      background: `linear-gradient(180deg, ${fn.color}08 0%, transparent 100%)`,
+                      background: `linear-gradient(180deg, ${fn.color}1f 0%, transparent 100%)`,
                       textAlign: 'center',
                     }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: fn.color }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: fn.color, textShadow: textGlow(fn.color, 12, 'cc') }}>
                         {fn.name}
                       </div>
                       {/* mini coverage */}
@@ -450,6 +484,15 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             focusSubId={focusSubId}
             onFocusHandled={() => setFocusSubId(null)}
           />
+        ) : page === 'report' ? (
+          <ChallengeTagReport
+            challenges={challenges}
+            selectedChallengeId={reportChallengeId}
+            onSelectChallenge={setReportChallengeId}
+            onToggleTag={handleToggleReportTag}
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
+          />
         ) : (
           <ChallengeLibrary
             challenges={challenges}
@@ -465,7 +508,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             ‹ NIST CSF 2.0 Challenge Matrix ›
           </div>
           <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#1a2a3a' }}>
-            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : page === 'mapping' ? 'Click a cell to toggle mapping' : 'Click a challenge to select  ·  Selected challenges plot on matrix'}
+            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : page === 'mapping' ? 'Click a cell to toggle mapping' : page === 'report' ? 'Select a challenge  ·  Click a subcategory cell to tag / untag it' : 'Click a challenge to select  ·  Selected challenges plot on matrix'}
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: '#1a2a3a' }}>
             Design Version 2.0.0-beta
@@ -480,6 +523,18 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
           existingChallenges={getChallengesForSub(challengeStore, modalSubId)}
           onSave={handleSaveChallenge}
           onClose={closeChallengeModal}
+        />
+      )}
+
+      {/* ── Export DOCX Modal ── */}
+      {showExportDocx && (
+        <ExportDocxModal
+          taggedCount={challenges.filter((c) => c.nistTags.length > 0).length}
+          onExport={(title, subject) => {
+            exportChallengeTagDoc(challenges, { title, subject });
+            setShowExportDocx(false);
+          }}
+          onClose={() => setShowExportDocx(false)}
         />
       )}
 
@@ -546,7 +601,10 @@ const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
         padding: '7px 8px',
         background: bg,
         border: `1px solid ${border}`,
-        borderRadius: 3,
+        borderRadius: 8,
+        boxShadow: isMapped && hasChallenge ? glow(fnColor, 12, '66')
+          : hasChallenge ? glow('#d4a017', 10, '44')
+          : isMapped ? glow(fnColor, 8, '33') : 'none',
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
@@ -643,33 +701,33 @@ const LegendItem: React.FC<{ color: string; label: string }> = ({ color, label }
 
 const langBtnStyle: React.CSSProperties = {
   padding: '3px 10px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 2, background: 'transparent',
+  letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 6, background: 'transparent',
   border: '1px solid #1a2a3a', textTransform: 'uppercase',
 };
 
 const tabBtnStyle: React.CSSProperties = {
   padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 2,
-  background: 'transparent', border: '1px solid #1a2a3a', color: '#4a5568',
+  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 8,
+  background: 'transparent', border: `1px solid ${ACCENT}22`, color: '#5a7280',
 };
 
 const tabActiveStyle: React.CSSProperties = {
-  background: '#0c1e3a', color: '#4fc3f7', borderColor: '#1a4a5a',
+  background: `${ACCENT}1a`, color: ACCENT, borderColor: ACCENT, boxShadow: glow(ACCENT, 14, '44'),
 };
 
 const tabChallengeActiveStyle: React.CSSProperties = {
-  background: '#1a1400', color: '#fbbf24', borderColor: '#3a2a00',
+  background: '#1a140033', color: '#fbbf24', borderColor: '#fbbf24', boxShadow: glow('#fbbf24', 14, '44'),
 };
 
 const hudBtnStyle: React.CSSProperties = {
   padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 2,
-  background: 'transparent', border: '1px solid #1a3a4a', color: '#4a7a8a',
+  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 8,
+  background: 'transparent', border: `1px solid ${ACCENT}33`, color: '#6aa3b3',
 };
 
 const cornerStyle: React.CSSProperties = {
   position: 'absolute', width: 20, height: 20, pointerEvents: 'none',
-  borderTop: '2px solid #4fc3f7', borderLeft: '2px solid #4fc3f7',
+  borderTop: `2px solid ${ACCENT}`, borderLeft: `2px solid ${ACCENT}`,
 };
 
 export default NISTMatrix;

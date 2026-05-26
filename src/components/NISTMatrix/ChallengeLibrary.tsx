@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Challenge, ChallengeSubType } from './types';
+import { MATRIX_BG } from './theme';
 
 interface Props {
   challenges: Challenge[];
@@ -124,7 +125,7 @@ const ChallengeLibrary: React.FC<Props> = ({ challenges, selectedIds, onToggle, 
       </div>
 
       {/* ── Challenge Grid ── */}
-      <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0 }}>
+      <div style={{ overflow: 'auto', padding: '16px 20px', flex: 1, minHeight: 0, background: MATRIX_BG }}>
         {grouped.length === 0 ? (
           <div style={{ textAlign: 'center', paddingTop: 60, color: '#2a3a4a', fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>
             // No challenges match filter
@@ -189,13 +190,15 @@ const ChallengeCard: React.FC<CardProps> = ({ challenge, selected, onToggle, onE
       onMouseLeave={() => setHovered(false)}
       style={{
         padding: '10px 12px',
-        background: selected ? '#0c1e3a' : hovered ? '#0c1624' : '#080e18',
-        border: `1px solid ${selected ? typeColor + '66' : hovered ? '#1a3a4a' : '#0e1a2a'}`,
-        borderLeft: `3px solid ${selected ? typeColor : hovered ? typeColor + '44' : '#0e1a2a'}`,
-        borderRadius: 3,
+        background: selected ? 'rgba(3,7,18,0.85)' : hovered ? 'rgba(12,22,36,0.7)' : 'rgba(8,14,24,0.6)',
+        border: `1px solid ${selected ? typeColor + '88' : hovered ? typeColor + '44' : '#0e1a2a'}`,
+        borderLeft: `3px solid ${selected ? typeColor : hovered ? typeColor + '66' : '#0e1a2a'}`,
+        borderRadius: 10,
+        boxShadow: selected ? `0 0 16px ${typeColor}44` : hovered ? `0 0 10px ${typeColor}22` : 'none',
         cursor: 'pointer',
         transition: 'all 0.15s ease',
         position: 'relative',
+        backdropFilter: 'blur(4px)',
       }}
     >
       {/* Selected indicator */}

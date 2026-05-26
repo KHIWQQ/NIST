@@ -1,16 +1,12 @@
 import { saveAs } from 'file-saver';
 import { NIST_FUNCTIONS } from './data';
-import { TOOL_GROUPS, NIST_TOOL_MAPPINGS } from './challengeData';
+import { TOOL_GROUPS } from './challengeData';
 
 export const cellKey = (subId: string, toolId: string) => `${subId}::${toolId}`;
 
-export const buildInitialMappings = (): Set<string> => {
-  const set = new Set<string>();
-  for (const [subId, toolIds] of Object.entries(NIST_TOOL_MAPPINGS)) {
-    for (const tid of toolIds) set.add(cellKey(subId, tid));
-  }
-  return set;
-};
+// Start with no mappings — the user fills these in (or imports JSON).
+// The old hardcoded NIST_TOOL_MAPPINGS seed in challengeData.ts is no longer used.
+export const buildInitialMappings = (): Set<string> => new Set<string>();
 
 /** Derive covered subcategory IDs from mapping set */
 export const getCoveredSubs = (mappings: Set<string>): Set<string> => {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import NISTMatrix from './components/NISTMatrix';
 import LoginScreen from './components/LoginScreen';
 import { authService, type AuthUser } from './services/auth';
+import { APP_BG } from './components/NISTMatrix/theme';
 
 function App() {
   const [user, setUser] = useState<AuthUser | null>(() => authService.getUser());
@@ -16,7 +17,7 @@ function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#060a10' }}>
+    <div style={{ minHeight: '100vh', background: APP_BG }}>
       <NISTMatrix currentUser={user} onLogout={handleLogout} />
     </div>
   );
