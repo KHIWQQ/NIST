@@ -6,21 +6,19 @@ import ExportDocxModal from './ExportDocxModal';
 import ChallengeLibrary from './ChallengeLibrary';
 import ChallengeTagReport from './ChallengeTagReport';
 import TagEditorModal from './TagEditorModal';
-import MappingMatrix from './MappingMatrix';
+// MappingMatrix kept for future use — tool-mapping UI is currently hidden
+// import MappingMatrix from './MappingMatrix';
+import PentestReportForm from '../PentestReport';
 import {
   buildInitialMappings,
-  cellKey,
-  getCoveredSubs,
-  exportMappingJson,
-  exportMappingCsv,
-  importMappingJson,
+  // cellKey, getCoveredSubs, exportMappingJson, exportMappingCsv, importMappingJson,
 } from './mappingUtils';
 import type { Challenge } from './types';
 import { challengeService } from '../../services/nistChallengeService';
 import type { AuthUser } from '../../services/auth';
 import { ACCENT, APP_BG, PANEL_BG, glow, textGlow } from './theme';
 
-type PageView = 'matrix' | 'mapping' | 'challenges' | 'report';
+type PageView = 'matrix' | 'challenges' | 'report' | 'pentest';
 
 // ── Challenge store: subId → Challenge[] ──────────────────────
 type ChallengeStore = Record<string, Challenge[]>;
@@ -43,11 +41,13 @@ interface NISTMatrixProps {
 }
 
 const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
-  // ── Mapping state (tool coverage) ────────────────────────────
-  const [mappings, setMappings] = useState<Set<string>>(buildInitialMappings);
+  // ── Mapping state (tool coverage) — kept but not exposed in UI ──
+  // Tool-mapping page is hidden; state preserved so we can resurface it later
+  // without losing the existing mappings persisted in localStorage.
+  const [mappings] = useState<Set<string>>(buildInitialMappings);
+  void mappings;
   const [clock, setClock] = useState(new Date());
   const [page, setPage] = useState<PageView>('matrix');
-  const [focusSubId, setFocusSubId] = useState<string | null>(null);
 
   // ── Challenge state ───────────────────────────────────────────
   // challenges: fetched from rtaf-api on mount — tags are mutable via TagEditor
@@ -72,8 +72,6 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
   const [editingChallengeId, setEditingChallengeId] = useState<number | null>(null);
 
   // ── Derived ───────────────────────────────────────────────────
-  const covered = useMemo(() => getCoveredSubs(mappings), [mappings]);
-
   // total subcategories that have at least 1 challenge
   const challengeCoveredCount = useMemo(
     () => Object.values(challengeStore).filter((arr) => arr.length > 0).length,
@@ -107,20 +105,9 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
     return () => clearInterval(t);
   }, []);
 
-  // ── Mapping toggle ────────────────────────────────────────────
-  const handleToggleMapping = useCallback((subId: string, toolId: string) => {
-    const key = cellKey(subId, toolId);
-    setMappings((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
   // ── Challenge modal open / close ──────────────────────────────
-  const openChallengeModal = useCallback((subId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const openChallengeModal = useCallback((subId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     setModalSubId(subId);
   }, []);
 
@@ -248,15 +235,8 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
     []
   );
 
-  // ── Export / Import ───────────────────────────────────────────
-  const handleImport = useCallback(async () => {
-    const result = await importMappingJson();
-    if (result.size > 0) setMappings(result);
-  }, []);
-  const handleExportJson = useCallback(() => exportMappingJson(mappings), [mappings]);
-  const handleExportCsv = useCallback(() => exportMappingCsv(mappings), [mappings]);
+  // ── Export ────────────────────────────────────────────────────
   const handleExportDoc = useCallback(() => setShowExportDocx(true), []);
-  const handleClearAll = useCallback(() => setMappings(new Set()), []);
 
   // ── Clock format ──────────────────────────────────────────────
   const formatDate = (d: Date) => {
@@ -344,7 +324,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
           <div>
             <div style={{ fontSize: 9, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#4a5568' }}>Blue Team Assessment Tool</div>
             <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#e2e8f0' }}>
-              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : page === 'mapping' ? 'NIST CSF MAPPING MATRIX' : page === 'report' ? 'NIST CSF TAG REPORT' : 'CHALLENGE LIBRARY'}
+              {page === 'matrix' ? 'NIST CSF OPERATIONAL MATRIX' : page === 'report' ? 'NIST CSF TAG REPORT' : page === 'pentest' ? 'PENTEST REPORT BUILDER' : 'CHALLENGE LIBRARY'}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -356,9 +336,6 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             <button onClick={() => setPage('report')} style={{ ...tabBtnStyle, ...(page === 'report' ? tabActiveStyle : {}) }}>
               Tag Report
             </button>
-            <button onClick={() => setPage('mapping')} style={{ ...tabBtnStyle, ...(page === 'mapping' ? tabActiveStyle : {}) }}>
-              Mapping Matrix
-            </button>
             <button onClick={() => setPage('challenges')} style={{ ...tabBtnStyle, ...(page === 'challenges' ? tabChallengeActiveStyle : {}), position: 'relative' }}>
               Challenge Library
               {selectedBankIds.size > 0 && (
@@ -369,14 +346,15 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
                 }} />
               )}
             </button>
+            <button onClick={() => setPage('pentest')} style={{ ...tabBtnStyle, ...(page === 'pentest' ? tabPentestActiveStyle : {}) }}>
+              Pentest Report
+            </button>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={handleImport} style={hudBtnStyle}>Import JSON</button>
-            <button onClick={handleExportJson} style={hudBtnStyle}>Export JSON</button>
-            <button onClick={handleExportCsv} style={hudBtnStyle}>Export CSV</button>
-            <button onClick={handleExportDoc} style={{ ...hudBtnStyle, borderColor: '#4fc3f7', color: '#4fc3f7' }}>Export DOCX</button>
-            <button onClick={handleClearAll} style={{ ...hudBtnStyle, borderColor: '#f87171', color: '#f87171' }}>Clear All</button>
-          </div>
+          {page !== 'pentest' && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleExportDoc} style={{ ...hudBtnStyle, borderColor: '#4fc3f7', color: '#4fc3f7' }}>Export DOCX</button>
+            </div>
+          )}
         </div>
 
         {page === 'matrix' ? (
@@ -405,17 +383,9 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
               <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                 <LegendItem color="#2a3a4a" label="NO CHALLENGE" />
                 <LegendItem color="#d4a017" label="HAS CHALLENGE" />
-                <LegendItem color="#4fc3f7" label="LINKED (MAPPED)" />
               </div>
 
               <div style={{ flex: 1 }} />
-
-              {/* Tool coverage */}
-              {covered.size > 0 && (
-                <span style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#2a4a3a' }}>
-                  <strong style={{ color: '#34d399' }}>{covered.size}</strong> tool-mapped
-                </span>
-              )}
             </div>
 
             {/* ── Matrix Grid ── */}
@@ -451,7 +421,6 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
                             {cat.id} · {cat.name}
                           </div>
                           {cat.subs.map((sub) => {
-                            const isMapped = covered.has(sub.id);
                             const hasChall = hasChallenge(challengeStore, sub.id);
                             const challCount = countChallenges(challengeStore, sub.id);
 
@@ -460,11 +429,8 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
                                 key={sub.id}
                                 subId={sub.id}
                                 subName={sub.name}
-                                isMapped={isMapped}
                                 hasChallenge={hasChall}
                                 challengeCount={challCount}
-                                fnColor={fn.color}
-                                onNavigate={() => { setFocusSubId(sub.id); setPage('mapping'); }}
                                 onOpenChallenge={(e) => openChallengeModal(sub.id, e)}
                               />
                             );
@@ -477,13 +443,6 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
               </div>
             </div>
           </>
-        ) : page === 'mapping' ? (
-          <MappingMatrix
-            mappings={mappings}
-            onToggle={handleToggleMapping}
-            focusSubId={focusSubId}
-            onFocusHandled={() => setFocusSubId(null)}
-          />
         ) : page === 'report' ? (
           <ChallengeTagReport
             challenges={challenges}
@@ -493,6 +452,8 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             onRefresh={handleRefresh}
             refreshing={refreshing}
           />
+        ) : page === 'pentest' ? (
+          <PentestReportForm />
         ) : (
           <ChallengeLibrary
             challenges={challenges}
@@ -508,7 +469,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
             ‹ NIST CSF 2.0 Challenge Matrix ›
           </div>
           <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#1a2a3a' }}>
-            {page === 'matrix' ? 'Click cell → mapping  ·  🎯 Click badge → challenge' : page === 'mapping' ? 'Click a cell to toggle mapping' : page === 'report' ? 'Select a challenge  ·  Click a subcategory cell to tag / untag it' : 'Click a challenge to select  ·  Selected challenges plot on matrix'}
+            {page === 'matrix' ? 'Click a sub-category → view / manage challenges' : page === 'report' ? 'Select a challenge  ·  Click a subcategory cell to tag / untag it' : page === 'pentest' ? 'Fill the form  ·  Save to server  ·  Export PDF — auto-saved as a local draft' : 'Click a challenge to select  ·  Selected challenges plot on matrix'}
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: '#1a2a3a' }}>
             Design Version 2.0.0-beta
@@ -558,41 +519,30 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
 interface SubcategoryCellProps {
   subId: string;
   subName: string;
-  isMapped: boolean;
   hasChallenge: boolean;
   challengeCount: number;
-  fnColor: string;
-  onNavigate: () => void;
   onOpenChallenge: (e: React.MouseEvent) => void;
 }
 
 const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
-  subName, isMapped, hasChallenge, challengeCount, fnColor, onNavigate, onOpenChallenge,
+  subName, hasChallenge, challengeCount, onOpenChallenge,
 }) => {
   const [hovered, setHovered] = useState(false);
 
-  // Border & background based on state
+  // Border & background based on challenge state only
   let bg = '#0c1220';
   let border = '#111e2e';
   let textColor = '#8899aa';
 
-  if (isMapped && hasChallenge) {
-    bg = '#0c1e3a';
-    border = fnColor + '66';
-    textColor = '#81d4fa';
-  } else if (isMapped) {
-    bg = '#0b1a30';
-    border = '#1a3a5a';
-    textColor = '#6a90aa';
-  } else if (hasChallenge) {
+  if (hasChallenge) {
     bg = '#1a1400';
     border = '#d4a01744';
     textColor = '#c8a840';
   }
 
   if (hovered) {
-    bg = isMapped ? '#0e1e40' : hasChallenge ? '#221a00' : '#0e1830';
-    border = isMapped ? fnColor + '80' : hasChallenge ? '#d4a01788' : '#1a2e44';
+    bg = hasChallenge ? '#221a00' : '#0e1830';
+    border = hasChallenge ? '#d4a01788' : '#1a2e44';
   }
 
   return (
@@ -602,9 +552,7 @@ const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
         background: bg,
         border: `1px solid ${border}`,
         borderRadius: 8,
-        boxShadow: isMapped && hasChallenge ? glow(fnColor, 12, '66')
-          : hasChallenge ? glow('#d4a017', 10, '44')
-          : isMapped ? glow(fnColor, 8, '33') : 'none',
+        boxShadow: hasChallenge ? glow('#d4a017', 10, '44') : 'none',
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
@@ -614,43 +562,21 @@ const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={onNavigate}
+      onClick={onOpenChallenge}
+      title={hasChallenge
+        ? `${challengeCount} challenge${challengeCount > 1 ? 's' : ''} — click to manage`
+        : 'No challenge — click to add'}
     >
-      {/* Left accent bar when mapped */}
-      {isMapped && (
-        <div style={{
-          position: 'absolute', left: 0, top: 0, bottom: 0,
-          width: 3, background: fnColor, borderRadius: '3px 0 0 3px',
-        }} />
-      )}
-
       {/* Label */}
-      <div style={{ flex: 1, paddingLeft: isMapped ? 4 : 0 }}>
+      <div style={{ flex: 1 }}>
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: textColor, lineHeight: 1.35 }}>
           {subName}
         </div>
       </div>
 
-      {/* Right-side icons */}
+      {/* CHALLENGE badge */}
       <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
-        {/* LINKED badge */}
-        {isMapped && (
-          <span
-            title="Tool mapped — click to view"
-            style={{
-              fontSize: 10, color: '#4fc3f7', lineHeight: 1,
-              padding: '1px 2px', borderRadius: 2,
-              background: 'rgba(79,195,247,0.08)',
-            }}
-          >
-            🔗
-          </span>
-        )}
-
-        {/* CHALLENGE badge — click opens modal */}
         <span
-          title={hasChallenge ? `${challengeCount} challenge${challengeCount > 1 ? 's' : ''} — click to manage` : 'No challenge — click to add'}
-          onClick={onOpenChallenge}
           style={{
             fontSize: 9,
             fontFamily: "'Share Tech Mono', monospace",
@@ -660,24 +586,13 @@ const SubcategoryCell: React.FC<SubcategoryCellProps> = ({
             border: `1px solid ${hasChallenge ? '#d4a01766' : '#1a2a3a'}`,
             background: hasChallenge ? '#2a1a0088' : 'transparent',
             color: hasChallenge ? '#d4a017' : '#2a3a4a',
-            cursor: 'pointer',
             transition: 'all 0.15s',
             minWidth: 22,
             textAlign: 'center',
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = '#d4a017aa';
-            e.currentTarget.style.color = '#f0c030';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = hasChallenge ? '#d4a01766' : '#1a2a3a';
-            e.currentTarget.style.color = hasChallenge ? '#d4a017' : '#2a3a4a';
-          }}
         >
           {hasChallenge ? `🎯${challengeCount}` : '🎯'}
         </span>
-
-        {/* Navigate arrow */}
         <span style={{ fontSize: 12, color: '#2a3a4a' }}>›</span>
       </div>
     </div>
@@ -717,6 +632,10 @@ const tabActiveStyle: React.CSSProperties = {
 
 const tabChallengeActiveStyle: React.CSSProperties = {
   background: '#1a140033', color: '#fbbf24', borderColor: '#fbbf24', boxShadow: glow('#fbbf24', 14, '44'),
+};
+
+const tabPentestActiveStyle: React.CSSProperties = {
+  background: '#0a2a1a33', color: '#34d399', borderColor: '#34d399', boxShadow: glow('#34d399', 14, '44'),
 };
 
 const hudBtnStyle: React.CSSProperties = {
