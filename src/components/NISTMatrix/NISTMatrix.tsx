@@ -170,7 +170,7 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
         });
       }
 
-      // Persist to rtaf-api. link/unlink address NIST records by documentId,
+      // Persist to rtaf-api. Tags address NIST records by documentId,
       // so translate sub_ids → nistDocumentIds first.
       if (!target.documentId) {
         console.warn('Challenge has no documentId — tags not persisted');
@@ -179,17 +179,10 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
       const toDocIds = (tags: string[]) =>
         tags.map((t) => subIdToDocId[t]).filter((d): d is string => Boolean(d));
       try {
-        const newDocIds = toDocIds(newTags);
-        if (newDocIds.length > 0) {
-          // link replaces the whole set → handles both add and remove
-          await challengeService.linkTags(target.documentId, newDocIds);
-        } else {
-          // clearing all tags: link rejects empty arrays, so unlink the old set
-          const oldDocIds = toDocIds(oldTags);
-          if (oldDocIds.length > 0) {
-            await challengeService.unlinkTags(target.documentId, oldDocIds);
-          }
-        }
+        // Full replace via PUT /link — handles add, remove, and clear-all
+        // (empty array). Avoids the DELETE /unlink route whose body Strapi
+        // never parses. See challengeService.setTags.
+        await challengeService.setTags(target.documentId, toDocIds(newTags));
         setLoadError(null);
       } catch (err) {
         console.error('Failed to persist NIST tags:', err);

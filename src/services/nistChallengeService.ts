@@ -118,8 +118,13 @@ export const challengeService = {
     return { challenges: merged, subIdToDocId: maps.subIdToDocId };
   },
 
-  // ── NIST tag link/unlink (requires nist-data module on rtaf-api) ──
-  async linkTags(challengeDocumentId: string, nistDocumentIds: string[]): Promise<void> {
+  // ── Set a challenge's NIST tags (requires nist-data module on rtaf-api) ──
+  // Full replace: the PUT /link endpoint overwrites nist_datas with exactly
+  // the given set. An empty array clears all tags. We deliberately avoid the
+  // DELETE /unlink route — Strapi's body parser (koa-body) does not parse
+  // request bodies for DELETE, so its `nistDocumentIds` arrives undefined and
+  // the request 400s with "nistDocumentIds must be an array".
+  async setTags(challengeDocumentId: string, nistDocumentIds: string[]): Promise<void> {
     const res = await fetch(
       `${BASE}/api/nist-data/challenge/${encodeURIComponent(challengeDocumentId)}/link`,
       {
@@ -128,18 +133,6 @@ export const challengeService = {
         body: JSON.stringify({ nistDocumentIds }),
       }
     );
-    await ensureOk(res, 'linkTags');
-  },
-
-  async unlinkTags(challengeDocumentId: string, nistDocumentIds: string[]): Promise<void> {
-    const res = await fetch(
-      `${BASE}/api/nist-data/challenge/${encodeURIComponent(challengeDocumentId)}/unlink`,
-      {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ nistDocumentIds }),
-      }
-    );
-    await ensureOk(res, 'unlinkTags');
+    await ensureOk(res, 'setTags');
   },
 };

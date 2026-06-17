@@ -91,15 +91,21 @@ export default factories.createCoreController(
           return ctx.notFound("Challenge not found");
         }
 
-        const nistRecords = await strapi.db
-          .query("api::nist-data.nist-data")
-          .findMany({
-            where: { documentId: { $in: nistDocumentIds } },
-            select: ["id", "documentId"],
-          });
+        // Full replace: resolve documentIds → numeric ids. An empty array is a
+        // valid "clear all tags" request, so only run the lookup (and reject
+        // unknown ids) when the caller actually passed some.
+        let nistRecords: { id: number; documentId: string }[] = [];
+        if (nistDocumentIds.length > 0) {
+          nistRecords = await strapi.db
+            .query("api::nist-data.nist-data")
+            .findMany({
+              where: { documentId: { $in: nistDocumentIds } },
+              select: ["id", "documentId"],
+            });
 
-        if (nistRecords.length === 0) {
-          return ctx.badRequest("No valid NIST subcategories found");
+          if (nistRecords.length === 0) {
+            return ctx.badRequest("No valid NIST subcategories found");
+          }
         }
 
         await strapi.db.query("api::challenge.challenge").update({
