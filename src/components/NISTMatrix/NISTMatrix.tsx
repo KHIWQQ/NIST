@@ -266,24 +266,20 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
               {currentUser.username}
             </span>
             {onLogout && (
-              <button
+              <NavButton
+                color="#5f96aa"
                 onClick={onLogout}
                 title="Logout"
-                style={{
-                  padding: '3px 9px', fontSize: 9, fontFamily: "'Rajdhani', sans-serif",
-                  fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-                  cursor: 'pointer', borderRadius: 2,
-                  background: 'transparent', border: '1px solid #1a3a4a', color: '#4a7a8a',
-                }}
+                style={{ padding: '3px 9px', fontSize: 9, borderRadius: 4, letterSpacing: '0.12em' }}
               >
                 Logout
-              </button>
+              </NavButton>
             )}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 0, marginRight: 20 }}>
-          <button style={{ ...langBtnStyle, background: '#1a2332', color: '#4fc3f7', borderColor: '#1a3a4a' }}>US</button>
-          <button style={{ ...langBtnStyle, color: '#4a5568', borderColor: '#1a2a3a' }}>TH</button>
+        <div style={{ display: 'flex', gap: 6, marginRight: 20 }}>
+          <NavButton color="#4fc3f7" active style={{ padding: '3px 10px', fontSize: 11, borderRadius: 6, letterSpacing: '0.08em' }}>US</NavButton>
+          <NavButton color="#4fc3f7" style={{ padding: '3px 10px', fontSize: 11, borderRadius: 6, letterSpacing: '0.08em' }}>TH</NavButton>
         </div>
         <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12, color: '#4fc3f7', letterSpacing: '0.05em' }}>
           {formatDate(clock)}
@@ -322,14 +318,14 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
           </div>
           <div style={{ flex: 1 }} />
           {/* Tabs */}
-          <div style={{ display: 'flex', gap: 0, marginRight: 16 }}>
-            <button onClick={() => setPage('matrix')} style={{ ...tabBtnStyle, ...(page === 'matrix' ? tabActiveStyle : {}) }}>
+          <div style={{ display: 'flex', gap: 6, marginRight: 16 }}>
+            <NavButton color={ACCENT} active={page === 'matrix'} onClick={() => setPage('matrix')}>
               Matrix View
-            </button>
-            <button onClick={() => setPage('report')} style={{ ...tabBtnStyle, ...(page === 'report' ? tabActiveStyle : {}) }}>
+            </NavButton>
+            <NavButton color={ACCENT} active={page === 'report'} onClick={() => setPage('report')}>
               Tag Report
-            </button>
-            <button onClick={() => setPage('challenges')} style={{ ...tabBtnStyle, ...(page === 'challenges' ? tabChallengeActiveStyle : {}), position: 'relative' }}>
+            </NavButton>
+            <NavButton color="#fbbf24" active={page === 'challenges'} onClick={() => setPage('challenges')} style={{ position: 'relative' }}>
               Challenge Library
               {selectedBankIds.size > 0 && (
                 <span style={{
@@ -338,14 +334,14 @@ const NISTMatrix: React.FC<NISTMatrixProps> = ({ currentUser, onLogout }) => {
                   background: '#fbbf24', boxShadow: '0 0 4px #fbbf24',
                 }} />
               )}
-            </button>
-            <button onClick={() => setPage('pentest')} style={{ ...tabBtnStyle, ...(page === 'pentest' ? tabPentestActiveStyle : {}) }}>
+            </NavButton>
+            <NavButton color="#34d399" active={page === 'pentest'} onClick={() => setPage('pentest')}>
               Pentest Report
-            </button>
+            </NavButton>
           </div>
           {page !== 'pentest' && (
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleExportDoc} style={{ ...hudBtnStyle, borderColor: '#4fc3f7', color: '#4fc3f7' }}>Export DOCX</button>
+              <NavButton color={ACCENT} solid onClick={handleExportDoc}>Export DOCX</NavButton>
             </div>
           )}
         </div>
@@ -605,37 +601,63 @@ const LegendItem: React.FC<{ color: string; label: string }> = ({ color, label }
   </div>
 );
 
+// ── NavButton: non-sunken nav pill — solid fill, visible border, ──
+//    hover glow + press feedback (replaces the old flat inline buttons)
+interface NavButtonProps {
+  color: string;          // accent color for this button
+  active?: boolean;       // selected/current (filled tint + strong glow)
+  solid?: boolean;        // filled action style (Export)
+  onClick?: () => void;
+  title?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}
+
+const NavButton: React.FC<NavButtonProps> = ({
+  color, active = false, solid = false, onClick, title, style, children,
+}) => {
+  const [hover, setHover] = useState(false);
+  const [press, setPress] = useState(false);
+
+  let bg: string, border: string, fg: string, shadow: string;
+  if (solid) {
+    // filled action button (Export) — reads clearly as a primary button
+    border = color; fg = '#ecfeff';
+    bg = hover ? '#0891b2' : '#0e7490';
+    shadow = glow(color, hover ? 18 : 12, hover ? 'aa' : '77');
+  } else if (active) {
+    bg = `${color}33`; border = color; fg = color; shadow = glow(color, 16, '88');
+  } else if (hover) {
+    bg = `${color}24`; border = color; fg = '#eafdff'; shadow = glow(color, 12, '66');
+  } else {
+    // idle — solid panel fill + visible border so it never "sinks"
+    bg = 'rgba(13,27,38,0.9)'; border = `${color}55`; fg = '#cde3ec'; shadow = 'none';
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => { setHover(false); setPress(false); }}
+      onMouseDown={() => setPress(true)}
+      onMouseUp={() => setPress(false)}
+      style={{
+        padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11,
+        fontWeight: active || solid ? 700 : 600, letterSpacing: '0.1em', textTransform: 'uppercase',
+        cursor: 'pointer', borderRadius: 8,
+        background: bg, border: `1px solid ${border}`, color: fg, boxShadow: shadow,
+        transform: press ? 'translateY(0) scale(0.96)' : hover ? 'translateY(-1px)' : 'none',
+        transition: 'background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .1s ease',
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+};
+
 // ── Styles ────────────────────────────────────────────────────
-
-const langBtnStyle: React.CSSProperties = {
-  padding: '3px 10px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 6, background: 'transparent',
-  border: '1px solid #1a2a3a', textTransform: 'uppercase',
-};
-
-const tabBtnStyle: React.CSSProperties = {
-  padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 8,
-  background: 'transparent', border: `1px solid ${ACCENT}22`, color: '#5a7280',
-};
-
-const tabActiveStyle: React.CSSProperties = {
-  background: `${ACCENT}1a`, color: ACCENT, borderColor: ACCENT, boxShadow: glow(ACCENT, 14, '44'),
-};
-
-const tabChallengeActiveStyle: React.CSSProperties = {
-  background: '#1a140033', color: '#fbbf24', borderColor: '#fbbf24', boxShadow: glow('#fbbf24', 14, '44'),
-};
-
-const tabPentestActiveStyle: React.CSSProperties = {
-  background: '#0a2a1a33', color: '#34d399', borderColor: '#34d399', boxShadow: glow('#34d399', 14, '44'),
-};
-
-const hudBtnStyle: React.CSSProperties = {
-  padding: '6px 16px', fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 8,
-  background: 'transparent', border: `1px solid ${ACCENT}33`, color: '#6aa3b3',
-};
 
 const cornerStyle: React.CSSProperties = {
   position: 'absolute', width: 20, height: 20, pointerEvents: 'none',
